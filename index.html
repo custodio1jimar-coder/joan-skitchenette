@@ -608,8 +608,17 @@ async function startCustomerZXing(video,status){
   }
 }
 
+
+let lastCustomerScanCode='', lastCustomerScanAt=0;
+function customerScanGuard(code){
+  const now=Date.now();
+  if(code===lastCustomerScanCode && now-lastCustomerScanAt<1200) return false;
+  lastCustomerScanCode=code; lastCustomerScanAt=now;
+  return true;
+}
 function addScannedCustomerItem(code){
   code=String(code||'').trim();
+  if(!customerScanGuard(code)) return;
   const p=products.find(x=>String(x.barcode||'').trim()===code);
   if(!p){
     const status=document.getElementById('barcodeScanStatus');
@@ -636,7 +645,10 @@ function addScannedCustomerItem(code){
   const status=document.getElementById('barcodeScanStatus');
   if(status)status.textContent='✓ Added: '+p.name;
   if(navigator.vibrate)navigator.vibrate(100);
-  setTimeout(closeCustomerScanner,700);
+  const btn=document.getElementById('customerScanContinue');
+  if(btn) btn.textContent='✓ '+p.name+' — Scan next item';
+  const status2=document.getElementById('barcodeScanStatus');
+  if(status2) setTimeout(()=>{ if(customerScannerOpen) status2.textContent='Ready — scan next item'; },700);
 }
 
 function closeCustomerScanner(){
