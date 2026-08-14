@@ -67,6 +67,29 @@ main{max-width:1100px;margin:auto;padding:17px}
 .print-btn{background:#713707!important;color:#fff!important;width:100%;margin-top:8px}.receipt-print{max-width:360px;margin:auto}.receipt-print .receipt-item{display:flex;justify-content:space-between;gap:10px}.receipt-print .receipt-item span:first-child{flex:1}.receipt-print .receipt-item span:last-child{white-space:nowrap}.receipt-print .receipt-total{font-size:18px;font-weight:bold}.receipt-print .receipt-center{text-align:center}
 @media print{body{background:#fff!important}.receipt-print{max-width:none}}
 </style>
+
+<script>
+let scanAudioCtx=null;
+function playScanBeep(success=true){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return;
+    if(!scanAudioCtx)scanAudioCtx=new AC();
+    if(scanAudioCtx.state==='suspended')scanAudioCtx.resume();
+    const osc=scanAudioCtx.createOscillator();
+    const gain=scanAudioCtx.createGain();
+    osc.type='square';
+    osc.frequency.value=success?1150:420;
+    gain.gain.setValueAtTime(0.0001,scanAudioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18,scanAudioCtx.currentTime+0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001,scanAudioCtx.currentTime+(success?0.12:0.18));
+    osc.connect(gain); gain.connect(scanAudioCtx.destination);
+    osc.start();
+    osc.stop(scanAudioCtx.currentTime+(success?0.13:0.19));
+  }catch(e){}
+}
+</script>
+
 </head>
 <body>
 
@@ -228,9 +251,22 @@ let total=cart.reduce((s,x)=>s+x.price*x.qty,0),r=Number(document.getElementById
 let ref=(document.getElementById("gcashRef")?.value||"").trim();
 if(payment==="Cash"&&r<total)return alert("Kulang ang bayad.");
 if(payment==="GCash"&&!ref)return alert("Ilagay muna ang GCash Reference Number.");
-orders.push({total,payment,date:new Date().toLocaleString(),reference:payment==="GCash"?ref:"",items:cart.map(x=>({...x}))});
-cart.forEach(x=>{let p=products.find(p=>p.name===x.name);if(p&&p.stock<900)p.stock-=x.qty});
-persist();showReceipt(orders[orders.length-1],r);cart=[];
+// Deduct inventory only after payment has been validated.
+const soldItems=cart.map(x=>({...x}));
+for(const x of soldItems){
+  const p=products.find(p=>p.name===x.name);
+  if(!p) return alert("Item not found in inventory: "+x.name);
+  if(Number(p.stock)<Number(x.qty)) return alert("Insufficient stock for "+x.name+". Available: "+p.stock);
+}
+for(const x of soldItems){
+  const p=products.find(p=>p.name===x.name);
+  if(Number(p.stock)<900) p.stock=Math.max(0,Number(p.stock)-Number(x.qty));
+}
+const order={total,payment,date:new Date().toLocaleString(),reference:payment==="GCash"?ref:"",items:soldItems};
+orders.push(order);
+persist();
+showReceipt(order,r);
+cart=[];
 }
 function buildReceiptHtml(o,r){
 let change=o.payment==="Cash"?r-o.total:0;
@@ -626,10 +662,12 @@ function addScannedCustomerItem(code){
     return;
   }
   if(Number(p.stock)<=0){
+    playScanBeep(false);
     const status=document.getElementById('barcodeScanStatus');
     if(status)status.textContent='❌ '+p.name+' is out of stock.';
     return;
   }
+  playScanBeep(true);
   const existing=cart.find(x=>x.name===p.name);
   if(existing){
     if(existing.qty>=p.stock){
