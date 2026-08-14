@@ -187,7 +187,7 @@ function homeContent(){document.getElementById("content").classList.add("hidden"
 function openCategory(cat){
 currentCat=cat;let c=document.getElementById("content");c.classList.remove("hidden");
 let list=products.filter(p=>p.cat===cat);
-c.innerHTML="<h2>"+cat+"</h2><div class='actions'><button onclick='ownerAccess(()=>openAdd())'>+ ADD ITEM</button><button class='secondary' onclick='inventory()'>INVENTORY</button></div><br><div class='products'>"+
+c.innerHTML="<h2>"+cat+"</h2><div class='actions'><button onclick='ownerAccess(()=>openAdd())'>+ ADD ITEM</button><button class='secondary' onclick='inventory()'>INVENTORY</button><button class='primary' onclick='scanBarcodeForSale()'>📷 SCAN CUSTOMER ITEM</button></div><br><div class='products'>"+
 list.map(p=>"<div class='product'><h3>"+esc(p.name)+"</h3><div class='price'>PHP "+p.price.toFixed(2)+" / "+esc(p.unit)+"</div><small>Stock: "+p.stock+"</small><br><button class='add' onclick='addItem("+products.indexOf(p)+")'>ADD TO CART</button></div>").join("")+
 "</div><div id='cartbox'></div>";
 renderCart();
@@ -237,20 +237,20 @@ let items=o.items.map(x=>`<div class="receipt-item"><span>${esc(x.name)} × ${x.
 return `<div class="receipt-print"><div class="receipt-center"><h2>JOAN'S KITCHENETTE</h2><small>${esc(o.date)}</small></div><div class="line"></div>${items}<div class="line"></div><div class="row receipt-total"><span>Total</span><span>PHP ${o.total.toFixed(2)}</span></div><div style="margin-top:8px">Payment: ${esc(o.payment)}${o.payment==="Cash"?`<br>Received: PHP ${r.toFixed(2)}<br>Change: PHP ${change.toFixed(2)}`:`<br>GCash Reference: ${esc(o.reference)}`}</div><div class="line"></div><div class="receipt-center">Thank you!</div></div>`;
 }
 function printReceipt(o,r){
-  let html=buildReceiptHtml(o,r);
-  if(window.Android&&typeof window.Android.printReceipt==='function'){
-    window.Android.printReceipt(html);
-  }else{
-    let w=window.open('','_blank');
-    if(w){
-      w.document.write('<html><head><title>Receipt</title></head><body>'+html+'</body></html>');
-      w.document.close();
-      w.focus();
-      setTimeout(()=>w.print(),300);
-    }else{
-      alert('Printing is blocked on this device.');
-    }
+let html=buildReceiptHtml(o,r);
+if(window.Android&&typeof window.Android.printReceipt==='function'){
+  window.Android.printReceipt(html);
+}else{
+  let w=window.open('','_blank');
+  if(!w){
+    alert('Printing is blocked on this device.');
+    return;
   }
+  w.document.write('<html><head><title>Receipt</title></head><body>'+html+'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(()=>w.print(),300);
+}
 }
 function showReceipt(o,r){
 let change=o.payment==="Cash"?r-o.total:0;
@@ -414,81 +414,164 @@ function cloudSyncNow(){if(!jkCloudRef){alert('Cloud Sync is not connected. Set 
 window.addEventListener('load',()=>setTimeout(()=>initCloudSync(),500));
 
 // ===== Barcode camera scanner =====
-let barcodeStream=null, barcodeTimer=null, barcodeScannerOpen=false, zxingReader=null;
+let barcodeStream=null, barcodeTimer=null, barcodeScannerOpen=false, zxingReader=null, zxingControls=null, barcodeScanMode='edit';
 
-function scanBarcodeForEdit(){
+async function scanBarcodeForEdit(){
+  barcodeScanMode='edit';
+  const title=document.getElementById('barcodeScannerTitle');
+  const hint=document.getElementById('barcodeScannerHint');
+  if(title)title.textContent='📷 Scan Product Barcode';
+  if(hint)hint.textContent='I-scan ang barcode para idagdag o i-edit ang item.';
   const modal=document.getElementById('barcodeScannerModal');
   const video=document.getElementById('barcodeVideo');
   const status=document.getElementById('barcodeScanStatus');
-  if(!modal||!video){ alert('Barcode scanner UI is unavailable.'); return; }
+  if(!modal||!video){alert('Barcode scanner UI is unavailable.');return;}
   modal.classList.remove('hidden');
   barcodeScannerOpen=true;
-  status.textContent='Requesting camera permission…';
+  status.textContent='Requesting rear camera…';
 
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    status.textContent='Camera is not available. Use HTTPS and allow camera permission.';
+    status.textContent='Camera unavailable. Open the site using HTTPS and allow camera permission.';
     return;
   }
 
-  navigator.mediaDevices.getUserMedia({
-    video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},
-    audio:false
-  }).then(stream=>{
-    barcodeStream=stream;
-    video.srcObject=stream;
-    return video.play();
-  }).then(()=>{
-    status.textContent='Point the camera at the barcode…';
-    if('BarcodeDetector' in window){
-      startNativeBarcodeScan(video,status);
-    }else{
-      loadZXingScanner(video,status);
+  // Use a moderate resolution so the preview is not excessively cropped/zoomed.
+  const tries=[
+    {video:{facingMode:{exact:'environment'},width:{ideal:1280,max:1920},height:{ideal:720,max:1080},aspectRatio:{ideal:16/9}},audio:false},
+    {video:{facingMode:'environment',width:{ideal:960,max:1280},height:{ideal:540,max:720}},audio:false}
+  ];
+  let stream=null, lastErr=null;
+  for(const constraints of tries){
+    try{stream=await navigator.mediaDevices.getUserMedia(constraints);break;}catch(e){lastErr=e;}
+  }
+  if(!stream){
+    status.textContent='Camera error: '+(lastErr?.message||'Permission denied');
+    return;
+  }
+  barcodeStream=stream;
+  video.srcObject=stream;
+  try{await video.play();}catch(e){}
+
+  // Do not digitally crop the camera preview.
+  video.style.objectFit='contain';
+  video.style.transform='none';
+  const track=stream.getVideoTracks()[0];
+  try{
+    const caps=track.getCapabilities?.();
+    if(caps?.zoom){
+      const min=caps.zoom.min??1;
+      const max=caps.zoom.max??min;
+      // Start at the minimum available zoom to avoid the "too close" look.
+      await track.applyConstraints({advanced:[{zoom:min}]});
     }
-  }).catch(err=>{
-    status.textContent='Camera permission/error: '+(err.message||err);
-  });
+  }catch(e){}
+
+  status.textContent='Itapat ang puting guide sa barcode…';
+  if('BarcodeDetector' in window){startNativeBarcodeScan(video,status);}else{loadZXingScanner(video,status);}
+}
+
+async function scanBarcodeForSale(){
+  barcodeScanMode='sale';
+  const title=document.getElementById('barcodeScannerTitle');
+  const hint=document.getElementById('barcodeScannerHint');
+  if(title)title.textContent='🛒 Scan Customer Items';
+  if(hint)hint.textContent='I-scan nang sunod-sunod ang mga pinamili. Awtomatikong mapupunta sa cart.';
+  const modal=document.getElementById('barcodeScannerModal');
+  const video=document.getElementById('barcodeVideo');
+  const status=document.getElementById('barcodeScanStatus');
+  if(!modal||!video){alert('Barcode scanner UI is unavailable.');return;}
+  modal.classList.remove('hidden');
+  barcodeScannerOpen=true;
+  status.textContent='Requesting rear camera…';
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    status.textContent='Camera unavailable. Use HTTPS and allow camera permission.';
+    return;
+  }
+  const tries=[
+    {video:{facingMode:{exact:'environment'},width:{ideal:1280,max:1920},height:{ideal:720,max:1080},aspectRatio:{ideal:16/9}},audio:false},
+    {video:{facingMode:'environment',width:{ideal:960,max:1280},height:{ideal:540,max:720}},audio:false}
+  ];
+  let stream=null,lastErr=null;
+  for(const constraints of tries){
+    try{stream=await navigator.mediaDevices.getUserMedia(constraints);break}catch(e){lastErr=e;}
+  }
+  if(!stream){status.textContent='Camera error: '+(lastErr?.message||'Permission denied');return;}
+  barcodeStream=stream;
+  video.srcObject=stream;
+  video.style.objectFit='contain';
+  video.style.transform='none';
+  try{await video.play();}catch(e){}
+  try{
+    const track=stream.getVideoTracks()[0],caps=track.getCapabilities?.();
+    if(caps?.zoom){await track.applyConstraints({advanced:[{zoom:caps.zoom.min??1}]});}
+  }catch(e){}
+  status.textContent='Itapat ang barcode sa guide. I-scan ang bawat item.';
+  if('BarcodeDetector' in window) startNativeBarcodeScan(video,status);
+  else loadZXingScanner(video,status);
+}
+
+function handleScannedSaleBarcode(value,status){
+  value=(value||'').trim();
+  if(!value)return false;
+  const idx=products.findIndex(p=>String(p.barcode||'').trim()===value);
+  if(idx<0){
+    status.textContent='❌ Barcode '+value+' ay wala sa inventory.';
+    if(navigator.vibrate) navigator.vibrate([80,50,80]);
+    return false;
+  }
+  const p=products[idx];
+  if(Number(p.stock)<=0){
+    status.textContent='⚠️ '+p.name+' — OUT OF STOCK';
+    if(navigator.vibrate) navigator.vibrate([150,80,150]);
+    return false;
+  }
+  addItem(idx);
+  status.textContent='✓ '+p.name+' — '+(cart.find(x=>x.name===p.name)?.qty||1)+' sa cart. I-scan ang susunod.';
+  if(navigator.vibrate) navigator.vibrate(60);
+  return true;
 }
 
 function startNativeBarcodeScan(video,status){
   let detector;
   try{
-    detector=new BarcodeDetector({formats:[
-      'ean_13','ean_8','upc_a','upc_e','code_128','code_39','code_93',
-      'codabar','itf','qr_code'
-    ]});
-  }catch(e){
-    loadZXingScanner(video,status);
-    return;
-  }
+    // Keep to broadly supported retail formats. QR is also accepted.
+    detector=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','code_93','codabar','itf','qr_code']});
+  }catch(e){loadZXingScanner(video,status);return;}
   const tick=async()=>{
     if(!barcodeScannerOpen)return;
     try{
       const codes=await detector.detect(video);
-      if(codes && codes.length){
-        const value=codes[0].rawValue;
+      if(codes?.length){
+        const value=(codes[0].rawValue||'').trim();
         if(value){
+          if(barcodeScanMode==='sale'){
+            handleScannedSaleBarcode(value,status);
+            barcodeTimer=setTimeout(tick,700);
+            return;
+          }
+          if(barcodeScanMode==='sale'){
+            handleScannedSaleBarcode(value,status);
+            return;
+          }
           document.getElementById('newBarcode').value=value;
           status.textContent='✓ Barcode found: '+value;
-          setTimeout(closeBarcodeScanner,500);
+          setTimeout(closeBarcodeScanner,450);
           return;
         }
       }
     }catch(e){}
-    barcodeTimer=setTimeout(tick,180);
+    barcodeTimer=setTimeout(tick,150);
   };
   tick();
 }
 
 function loadZXingScanner(video,status){
-  status.textContent='Loading barcode scanner…';
-  if(window.ZXingBrowser){
-    startZXingScanner(video,status);
-    return;
-  }
+  status.textContent='Loading scanner…';
+  if(window.ZXingBrowser){startZXingScanner(video,status);return;}
   const s=document.createElement('script');
   s.src='https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js';
   s.onload=()=>startZXingScanner(video,status);
-  s.onerror=()=>{status.textContent='Scanner library could not load. Check internet connection.';};
+  s.onerror=()=>{status.textContent='Scanner library could not load. Check your internet connection.';};
   document.head.appendChild(s);
 }
 
@@ -496,24 +579,24 @@ async function startZXingScanner(video,status){
   try{
     const reader=new ZXingBrowser.BrowserMultiFormatReader();
     zxingReader=reader;
-    const controls=await reader.decodeFromVideoElement(video,(result,err)=>{
+    zxingControls=await reader.decodeFromVideoElement(video,(result,err)=>{
       if(!barcodeScannerOpen)return;
       if(result){
-        const value=result.getText();
-        document.getElementById('newBarcode').value=value;
-        status.textContent='✓ Barcode found: '+value;
-        setTimeout(closeBarcodeScanner,500);
-        try{controls.stop();}catch(e){}
+        const value=(result.getText()||'').trim();
+        if(value){
+          document.getElementById('newBarcode').value=value;
+          status.textContent='✓ Barcode found: '+value;
+          setTimeout(closeBarcodeScanner,450);
+        }
       }
     });
-  }catch(e){
-    status.textContent='Unable to start scanner: '+(e.message||e);
-  }
+  }catch(e){status.textContent='Unable to start scanner: '+(e.message||e);}
 }
 
 function closeBarcodeScanner(){
   barcodeScannerOpen=false;
   if(barcodeTimer){clearTimeout(barcodeTimer);barcodeTimer=null;}
+  if(zxingControls){try{zxingControls.stop();}catch(e){} zxingControls=null;}
   if(zxingReader){try{zxingReader.reset();}catch(e){} zxingReader=null;}
   const video=document.getElementById('barcodeVideo');
   if(video){try{video.pause();}catch(e){} video.srcObject=null;}
@@ -522,20 +605,20 @@ function closeBarcodeScanner(){
   if(modal)modal.classList.add('hidden');
 }
 
-
-if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
-}
-
-</script>
-
 <!-- Barcode scanner -->
 <div id="barcodeScannerModal" class="modal hidden">
-  <div class="modalbox" style="max-width:520px">
-    <h2>📷 Scan Barcode</h2>
-    <p style="color:#777;margin-top:-5px">Itutok ang camera sa barcode. Kapag nabasa, awtomatikong ilalagay ang number.</p>
-    <video id="barcodeVideo" playsinline autoplay muted style="width:100%;border-radius:14px;background:#111;max-height:55vh;object-fit:cover"></video>
+  <div class="modal-card" style="max-width:560px">
+    <h2 id="barcodeScannerTitle">📷 Scan Barcode</h2>
+    <p id="barcodeScannerHint" style="color:#777;margin-top:-5px">Gamitin ang rear camera. Itapat ang barcode sa puting guide.</p>
+    <div style="position:relative;background:#111;border-radius:14px;overflow:hidden;min-height:280px;display:flex;align-items:center;justify-content:center">
+      <video id="barcodeVideo" playsinline autoplay muted style="width:100%;height:auto;max-height:55vh;display:block;background:#111;object-fit:contain;transform:none"></video>
+      <div style="position:absolute;left:10%;right:10%;top:38%;height:24%;border:3px solid #fff;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.28);pointer-events:none"></div>
+      <div style="position:absolute;left:18%;right:18%;top:50%;height:2px;background:#ff8a00;pointer-events:none"></div>
+    </div>
     <div id="barcodeScanStatus" style="padding:10px 0;text-align:center;color:#713707;font-weight:bold">Starting camera…</div>
+    <button class="secondary" type="button" onclick="closeBarcodeScanner()" style="width:100%">CLOSE</button>
+  </div>
+</div>
     <button class="secondary" type="button" onclick="closeBarcodeScanner()" style="width:100%">CLOSE</button>
   </div>
 </div>
