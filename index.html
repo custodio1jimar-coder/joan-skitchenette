@@ -237,13 +237,13 @@ let items=o.items.map(x=>`<div class="receipt-item"><span>${esc(x.name)} × ${x.
 return `<div class="receipt-print"><div class="receipt-center"><h2>JOAN'S KITCHENETTE</h2><small>${esc(o.date)}</small></div><div class="line"></div>${items}<div class="line"></div><div class="row receipt-total"><span>Total</span><span>PHP ${o.total.toFixed(2)}</span></div><div style="margin-top:8px">Payment: ${esc(o.payment)}${o.payment==="Cash"?`<br>Received: PHP ${r.toFixed(2)}<br>Change: PHP ${change.toFixed(2)}`:`<br>GCash Reference: ${esc(o.reference)}`}</div><div class="line"></div><div class="receipt-center">Thank you!</div></div>`;
 }
 function printReceipt(o,r){
-  let receiptHtml=buildReceiptHtml(o,r);
+  let html=buildReceiptHtml(o,r);
   if(window.Android&&typeof window.Android.printReceipt==='function'){
-    window.Android.printReceipt(receiptHtml);
+    window.Android.printReceipt(html);
   }else{
     let w=window.open('','_blank');
     if(w){
-      w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title><style>body{font-family:Arial,sans-serif;padding:20px;max-width:420px;margin:auto}.receipt{font-size:14px}</style></head><body>'+receiptHtml+'</body></html>');
+      w.document.write('<html><head><title>Receipt</title></head><body>'+html+'</body></html>');
       w.document.close();
       w.focus();
       setTimeout(()=>w.print(),300);
