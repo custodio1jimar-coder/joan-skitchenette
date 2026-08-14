@@ -237,21 +237,20 @@ let items=o.items.map(x=>`<div class="receipt-item"><span>${esc(x.name)} × ${x.
 return `<div class="receipt-print"><div class="receipt-center"><h2>JOAN'S KITCHENETTE</h2><small>${esc(o.date)}</small></div><div class="line"></div>${items}<div class="line"></div><div class="row receipt-total"><span>Total</span><span>PHP ${o.total.toFixed(2)}</span></div><div style="margin-top:8px">Payment: ${esc(o.payment)}${o.payment==="Cash"?`<br>Received: PHP ${r.toFixed(2)}<br>Change: PHP ${change.toFixed(2)}`:`<br>GCash Reference: ${esc(o.reference)}`}</div><div class="line"></div><div class="receipt-center">Thank you!</div></div>`;
 }
 function printReceipt(o,r){
-let html=buildReceiptHtml(o,r);
-if(window.Android&&typeof window.Android.printReceipt==='function'){window.Android.printReceipt(html);}
-else{let w=window.open('','_blank');if(w){w.document.write('<html><head><title>Receipt</title></head><body>'+html+'\n<script>if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));</script>
-<!-- Barcode scanner -->
-<div id="barcodeScannerModal" class="modal hidden">
-  <div class="modalbox" style="max-width:520px">
-    <h2>📷 Scan Barcode</h2>
-    <p style="color:#777;margin-top:-5px">Itutok ang camera sa barcode. Kapag nabasa, awtomatikong ilalagay ang number.</p>
-    <video id="barcodeVideo" playsinline autoplay muted style="width:100%;border-radius:14px;background:#111;max-height:55vh;object-fit:cover"></video>
-    <div id="barcodeScanStatus" style="padding:10px 0;text-align:center;color:#713707;font-weight:bold">Starting camera…</div>
-    <button class="secondary" type="button" onclick="closeBarcodeScanner()" style="width:100%">CLOSE</button>
-  </div>
-</div>
-
-</body></html>');w.document.close();w.focus();setTimeout(()=>w.print(),300);}else alert('Printing is blocked on this device.');}
+  let receiptHtml=buildReceiptHtml(o,r);
+  if(window.Android&&typeof window.Android.printReceipt==='function'){
+    window.Android.printReceipt(receiptHtml);
+  }else{
+    let w=window.open('','_blank');
+    if(w){
+      w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title><style>body{font-family:Arial,sans-serif;padding:20px;max-width:420px;margin:auto}.receipt{font-size:14px}</style></head><body>'+receiptHtml+'</body></html>');
+      w.document.close();
+      w.focus();
+      setTimeout(()=>w.print(),300);
+    }else{
+      alert('Printing is blocked on this device.');
+    }
+  }
 }
 function showReceipt(o,r){
 let change=o.payment==="Cash"?r-o.total:0;
