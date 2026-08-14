@@ -14,7 +14,7 @@ body{margin:0;font-family:Arial,sans-serif;background:#f5f1ea;color:#292929}
 button{border:0;border-radius:12px;padding:13px 16px;font-size:15px;font-weight:bold}
 .login{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#552705,#d77a13);padding:18px}
 .card{width:100%;max-width:500px;background:#fff;border-radius:28px;padding:34px 24px;text-align:center;box-shadow:0 20px 50px #0005}
-.logo{width:115px;height:115px;border-radius:50%;object-fit:cover}
+.logo{width:115px;height:115px;border-radius:50%;object-fit:contain}
 input,select{width:100%;padding:14px;margin:6px 0;border:1px solid #ddd;border-radius:11px;font-size:16px}
 .primary{width:100%;background:#ed8a16;color:#fff;margin-top:8px}
 header{height:68px;background:#713707;color:#fff;display:flex;align-items:center;justify-content:space-between;padding:8px 14px}
@@ -187,7 +187,7 @@ function homeContent(){document.getElementById("content").classList.add("hidden"
 function openCategory(cat){
 currentCat=cat;let c=document.getElementById("content");c.classList.remove("hidden");
 let list=products.filter(p=>p.cat===cat);
-c.innerHTML="<h2>"+cat+"</h2><div class='actions'><button onclick='ownerAccess(()=>openAdd())'>+ ADD ITEM</button><button class='secondary' onclick='inventory()'>INVENTORY</button><button class='primary' onclick='openCustomerScanner()'>🛒 SCAN CUSTOMER ITEM</button></div><br><div class='products'>"+
+c.innerHTML="<h2>"+cat+"</h2><div class='actions'><button onclick='ownerAccess(()=>openAdd())'>+ ADD ITEM</button><button class='secondary' onclick='inventory()'>INVENTORY</button></div><br><div class='products'>"+
 list.map(p=>"<div class='product'><h3>"+esc(p.name)+"</h3><div class='price'>PHP "+p.price.toFixed(2)+" / "+esc(p.unit)+"</div><small>Stock: "+p.stock+"</small><br><button class='add' onclick='addItem("+products.indexOf(p)+")'>ADD TO CART</button></div>").join("")+
 "</div><div id='cartbox'></div>";
 renderCart();
@@ -203,6 +203,7 @@ function renderCart(){
 let box=document.getElementById("cartbox");if(!box)return;
 let total=cart.reduce((s,x)=>s+x.price*x.qty,0);
 box.innerHTML="<div class='cart'><h3>Current Order</h3>"+
+"<button type='button' class='primary' onclick='scanCustomerItem()' style='width:100%;margin-bottom:10px'>🛒📷 SCAN CUSTOMER ITEM</button>"+
 (cart.length?cart.map((x,i)=>"<div class='cartrow'><span>"+esc(x.name)+" x "+x.qty+"</span><span>PHP "+(x.price*x.qty).toFixed(2)+" <button onclick='removeCart("+i+")' class='secondary'>X</button></span></div>").join(""):"<p>No items yet. Tap ADD TO CART.</p>")+
 "<div class='total'>Total: PHP "+total.toFixed(2)+"</div><button class='primary' onclick='openPayment()'>PROCEED TO PAYMENT</button></div>";
 }
@@ -237,30 +238,20 @@ let items=o.items.map(x=>`<div class="receipt-item"><span>${esc(x.name)} × ${x.
 return `<div class="receipt-print"><div class="receipt-center"><h2>JOAN'S KITCHENETTE</h2><small>${esc(o.date)}</small></div><div class="line"></div>${items}<div class="line"></div><div class="row receipt-total"><span>Total</span><span>PHP ${o.total.toFixed(2)}</span></div><div style="margin-top:8px">Payment: ${esc(o.payment)}${o.payment==="Cash"?`<br>Received: PHP ${r.toFixed(2)}<br>Change: PHP ${change.toFixed(2)}`:`<br>GCash Reference: ${esc(o.reference)}`}</div><div class="line"></div><div class="receipt-center">Thank you!</div></div>`;
 }
 function printReceipt(o,r){
-let html=buildReceiptHtml(o,r);
-if(window.Android&&typeof window.Android.printReceipt==='function'){
-  window.Android.printReceipt(html);
-}else{
-  let w=window.open('','_blank');
-  if(!w){
-    alert('Printing is blocked on this device.');
-    return;
+  let html=buildReceiptHtml(o,r);
+  if(window.Android&&typeof window.Android.printReceipt==='function'){
+    window.Android.printReceipt(html);
+  }else{
+    let w=window.open('','_blank');
+    if(w){
+      w.document.write('<html><head><title>Receipt</title></head><body>'+html+'</body></html>');
+      w.document.close();
+      w.focus();
+      setTimeout(()=>w.print(),300);
+    }else{
+      alert('Printing is blocked on this device.');
+    }
   }
-  w.document.write('<html><head><title>Receipt</title></head><body>'+html+'
-<div id="customerScannerModal" class="modal hidden" style="position:fixed;inset:0;background:#000b;z-index:9999;display:flex;align-items:center;justify-content:center;padding:18px">
-  <div style="background:#fff;border-radius:20px;padding:18px;width:min(520px,100%);text-align:center">
-    <h2 style="margin-top:0">🛒 Scan Customer Item</h2>
-    <video id="customerBarcodeVideo" autoplay playsinline muted style="width:100%;max-height:55vh;object-fit:contain;background:#111;border-radius:14px"></video>
-    <div id="customerScanStatus" style="margin:10px 0;color:#555">Starting camera…</div>
-    <button class="secondary" onclick="closeCustomerScanner()">CLOSE</button>
-  </div>
-</div>
-
-</body></html>');
-  w.document.close();
-  w.focus();
-  setTimeout(()=>w.print(),300);
-}
 }
 function showReceipt(o,r){
 let change=o.payment==="Cash"?r-o.total:0;
@@ -423,134 +414,6 @@ function saveCloudConfig(){let c={apiKey:document.getElementById('fbApiKey').val
 function cloudSyncNow(){if(!jkCloudRef){alert('Cloud Sync is not connected. Set up Firebase first.');return}cloudPush()}
 window.addEventListener('load',()=>setTimeout(()=>initCloudSync(),500));
 
-
-// ===== Customer checkout barcode scanner =====
-let customerScanStream=null, customerScanOpen=false, customerScanTimer=null, customerZXingReader=null;
-
-function openCustomerScanner(){
-  const modal=document.getElementById('customerScannerModal');
-  const video=document.getElementById('customerBarcodeVideo');
-  const status=document.getElementById('customerScanStatus');
-  if(!modal||!video)return;
-  modal.classList.remove('hidden');
-  modal.style.display='flex';
-  customerScanOpen=true;
-  status.textContent='Requesting rear camera…';
-
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    status.textContent='Camera unavailable. Please use HTTPS and allow camera permission.';
-    return;
-  }
-
-  navigator.mediaDevices.getUserMedia({
-    video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},
-    audio:false
-  }).then(stream=>{
-    customerScanStream=stream;
-    video.srcObject=stream;
-    return video.play();
-  }).then(()=>{
-    status.textContent='Point the barcode inside the camera view…';
-    if('BarcodeDetector' in window){
-      let detector;
-      try{
-        detector=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','code_93','codabar','itf','qr_code']});
-      }catch(e){ detector=null; }
-      if(detector){ customerNativeScan(detector,video,status); return; }
-    }
-    customerLoadZXing(video,status);
-  }).catch(err=>{
-    status.textContent='Camera error: '+(err.message||err);
-  });
-}
-
-function customerNativeScan(detector,video,status){
-  if(!customerScanOpen)return;
-  detector.detect(video).then(codes=>{
-    if(!customerScanOpen)return;
-    if(codes&&codes.length&&codes[0].rawValue){
-      customerAddByBarcode(codes[0].rawValue);
-      return;
-    }
-    customerScanTimer=setTimeout(()=>customerNativeScan(detector,video,status),180);
-  }).catch(()=>{ customerScanTimer=setTimeout(()=>customerNativeScan(detector,video,status),300); });
-}
-
-function customerLoadZXing(video,status){
-  if(window.ZXingBrowser){
-    customerStartZXing(video,status);
-    return;
-  }
-  status.textContent='Loading barcode scanner…';
-  const s=document.createElement('script');
-  s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';
-  s.onload=()=>customerStartZXing(video,status);
-  s.onerror=()=>status.textContent='This browser does not support camera barcode scanning. Try Chrome or Safari with camera permission.';
-  document.head.appendChild(s);
-}
-
-function customerStartZXing(video,status){
-  try{
-    const reader=new ZXingBrowser.BrowserMultiFormatReader();
-    customerZXingReader=reader;
-    reader.decodeFromVideoElement(video,(result,err)=>{
-      if(!customerScanOpen)return;
-      if(result&&result.getText){
-        customerAddByBarcode(result.getText());
-      }else if(err){
-        status.textContent='Point the barcode inside the camera view…';
-      }
-    });
-  }catch(e){
-    status.textContent='Scanner error: '+e.message;
-  }
-}
-
-function customerAddByBarcode(code){
-  code=String(code||'').trim();
-  if(!code)return;
-  const p=products.find(x=>String(x.barcode||'').trim()===code);
-  if(!p){
-    alert('Barcode '+code+' is not registered in Inventory.');
-    return;
-  }
-  if(Number(p.stock)<=0){
-    alert(p.name+' is OUT OF STOCK.');
-    return;
-  }
-  const existing=cart.find(x=>x.name===p.name);
-  if(existing){
-    if(existing.qty>=p.stock){
-      alert('Not enough stock for '+p.name+'.');
-      return;
-    }
-    existing.qty++;
-  }else{
-    cart.push({name:p.name,price:Number(p.price)||0,qty:1});
-  }
-  if(navigator.vibrate) navigator.vibrate(120);
-  renderCart();
-  closeCustomerScanner();
-  alert(p.name+' added to Current Order.');
-}
-
-function closeCustomerScanner(){
-  customerScanOpen=false;
-  if(customerScanTimer){clearTimeout(customerScanTimer);customerScanTimer=null;}
-  if(customerZXingReader){
-    try{customerZXingReader.reset();}catch(e){}
-    customerZXingReader=null;
-  }
-  if(customerScanStream){
-    customerScanStream.getTracks().forEach(t=>t.stop());
-    customerScanStream=null;
-  }
-  const video=document.getElementById('customerBarcodeVideo');
-  if(video)video.srcObject=null;
-  const modal=document.getElementById('customerScannerModal');
-  if(modal){modal.classList.add('hidden');modal.style.display='none';}
-}
-
 // ===== Barcode camera scanner =====
 let barcodeStream=null, barcodeTimer=null, barcodeScannerOpen=false, zxingReader=null;
 
@@ -662,9 +525,130 @@ function closeBarcodeScanner(){
 
 
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=final3').catch(()=>{}));
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 }
 
+</script>
+
+<script>
+let customerScannerOpen=false, customerStream=null, customerTimer=null, customerZXingReader=null;
+
+function scanCustomerItem(){
+  customerScannerOpen=true;
+  const modal=document.getElementById('barcodeScannerModal');
+  const video=document.getElementById('barcodeVideo');
+  const status=document.getElementById('barcodeScanStatus');
+  if(!modal||!video||!status){alert('Scanner is unavailable.');return}
+  modal.classList.remove('hidden');
+  status.textContent='Starting camera…';
+  startCustomerScanner(video,status);
+}
+
+async function startCustomerScanner(video,status){
+  try{
+    customerStream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720},zoom:1},
+      audio:false
+    });
+    video.srcObject=customerStream;
+    video.setAttribute('playsinline','true');
+    video.muted=true;
+    await video.play();
+
+    if('BarcodeDetector' in window){
+      let detector;
+      try{
+        detector=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf']});
+      }catch(e){
+        detector=new BarcodeDetector();
+      }
+      const tick=async()=>{
+        if(!customerScannerOpen)return;
+        try{
+          const codes=await detector.detect(video);
+          if(codes&&codes.length&&codes[0].rawValue){
+            addScannedCustomerItem(codes[0].rawValue);
+            return;
+          }
+        }catch(e){}
+        customerTimer=setTimeout(tick,180);
+      };
+      tick();
+    }else{
+      loadCustomerZXing(video,status);
+    }
+  }catch(e){
+    status.textContent='Camera error: '+(e.message||e);
+  }
+}
+
+function loadCustomerZXing(video,status){
+  status.textContent='Loading scanner…';
+  if(window.ZXingBrowser){startCustomerZXing(video,status);return;}
+  const s=document.createElement('script');
+  s.src='https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js';
+  s.onload=()=>startCustomerZXing(video,status);
+  s.onerror=()=>status.textContent='Scanner library could not load. Check internet connection.';
+  document.head.appendChild(s);
+}
+
+async function startCustomerZXing(video,status){
+  try{
+    const reader=new ZXingBrowser.BrowserMultiFormatReader();
+    customerZXingReader=reader;
+    const controls=await reader.decodeFromVideoElement(video,(result)=>{
+      if(!customerScannerOpen)return;
+      if(result){
+        addScannedCustomerItem(result.getText());
+        try{controls.stop();}catch(e){}
+      }
+    });
+  }catch(e){
+    status.textContent='Unable to start scanner: '+(e.message||e);
+  }
+}
+
+function addScannedCustomerItem(code){
+  code=String(code||'').trim();
+  const p=products.find(x=>String(x.barcode||'').trim()===code);
+  if(!p){
+    const status=document.getElementById('barcodeScanStatus');
+    if(status)status.textContent='❌ Barcode '+code+' is not in inventory.';
+    return;
+  }
+  if(Number(p.stock)<=0){
+    const status=document.getElementById('barcodeScanStatus');
+    if(status)status.textContent='❌ '+p.name+' is out of stock.';
+    return;
+  }
+  const existing=cart.find(x=>x.name===p.name);
+  if(existing){
+    if(existing.qty>=p.stock){
+      const status=document.getElementById('barcodeScanStatus');
+      if(status)status.textContent='❌ No more stock for '+p.name+'.';
+      return;
+    }
+    existing.qty++;
+  }else{
+    cart.push({name:p.name,price:Number(p.price),qty:1});
+  }
+  if(typeof renderCart==='function')renderCart();
+  const status=document.getElementById('barcodeScanStatus');
+  if(status)status.textContent='✓ Added: '+p.name;
+  if(navigator.vibrate)navigator.vibrate(100);
+  setTimeout(closeCustomerScanner,700);
+}
+
+function closeCustomerScanner(){
+  customerScannerOpen=false;
+  if(customerTimer){clearTimeout(customerTimer);customerTimer=null;}
+  if(customerZXingReader){try{customerZXingReader.reset()}catch(e){} customerZXingReader=null;}
+  if(customerStream){customerStream.getTracks().forEach(t=>t.stop());customerStream=null;}
+  const video=document.getElementById('barcodeVideo');
+  if(video){try{video.pause()}catch(e){} video.srcObject=null;}
+  const modal=document.getElementById('barcodeScannerModal');
+  if(modal)modal.classList.add('hidden');
+}
 </script>
 
 <!-- Barcode scanner -->
@@ -674,7 +658,7 @@ if('serviceWorker' in navigator){
     <p style="color:#777;margin-top:-5px">Itutok ang camera sa barcode. Kapag nabasa, awtomatikong ilalagay ang number.</p>
     <video id="barcodeVideo" playsinline autoplay muted style="width:100%;border-radius:14px;background:#111;max-height:55vh;object-fit:cover"></video>
     <div id="barcodeScanStatus" style="padding:10px 0;text-align:center;color:#713707;font-weight:bold">Starting camera…</div>
-    <button class="secondary" type="button" onclick="closeBarcodeScanner()" style="width:100%">CLOSE</button>
+    <button class="secondary" type="button" onclick="closeCustomerScanner();closeBarcodeScanner()" style="width:100%">CLOSE</button>
   </div>
 </div>
 
